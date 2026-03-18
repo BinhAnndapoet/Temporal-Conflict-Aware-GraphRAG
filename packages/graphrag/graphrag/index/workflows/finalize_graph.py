@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Microsoft
+# Licensed under the MIT License
+
 """A module containing run_workflow method definition."""
 
 import logging

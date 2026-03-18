@@ -1,3 +1,6 @@
+# Copyright (C) 2026 Microsoft
+# Licensed under the MIT License
+
 """Workflow to create final documents with text unit mappings."""
 
 import logging

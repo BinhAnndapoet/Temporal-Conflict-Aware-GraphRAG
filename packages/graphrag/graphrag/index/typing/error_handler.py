@@ -1,0 +1,5 @@
+"""Shared error handler types."""
+
+from collections.abc import Callable
+
+ErrorHandlerFn = Callable[[BaseException | None, str | None, dict | None], None]
