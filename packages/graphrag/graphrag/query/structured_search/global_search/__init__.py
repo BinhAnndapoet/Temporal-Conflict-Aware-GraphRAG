@@ -1,1 +1,0 @@
-"""GlobalSearch module."""

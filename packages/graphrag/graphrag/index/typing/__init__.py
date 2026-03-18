@@ -1,1 +1,0 @@
-"""Root typings for GraphRAG."""
