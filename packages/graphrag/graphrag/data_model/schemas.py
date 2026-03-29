@@ -20,6 +20,7 @@ EDGE_TARGET = "target"
 EDGE_DEGREE = "combined_degree"
 EDGE_DETAILS = "edge_details"
 EDGE_WEIGHT = "weight"
+EDGE_RELATION_TYPE = "relation_type"
 
 # POST-PREP CLAIM TABLE SCHEMA
 CLAIM_SUBJECT = "subject_id"
@@ -83,6 +84,7 @@ RELATIONSHIPS_FINAL_COLUMNS = [
     SHORT_ID,
     EDGE_SOURCE,
     EDGE_TARGET,
+    EDGE_RELATION_TYPE,
     DESCRIPTION,
     EDGE_WEIGHT,
     EDGE_DEGREE,

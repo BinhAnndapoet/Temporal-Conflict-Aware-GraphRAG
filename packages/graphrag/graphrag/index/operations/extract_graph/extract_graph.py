@@ -117,6 +117,12 @@ def _merge_entities(entity_dfs) -> pd.DataFrame:
 
 def _merge_relationships(relationship_dfs) -> pd.DataFrame:
     all_relationships = pd.concat(relationship_dfs, ignore_index=False)
+
+    def _merge_relation_types(values):
+        """Deduplicate and join relation types from multiple text chunks."""
+        unique = list(dict.fromkeys(v for v in values if v))
+        return "|".join(unique) if unique else None
+
     return (
         all_relationships
         .groupby(["source", "target"], sort=False)
@@ -124,6 +130,7 @@ def _merge_relationships(relationship_dfs) -> pd.DataFrame:
             description=("description", list),
             text_unit_ids=("source_id", list),
             weight=("weight", "sum"),
+            relation_type=("relation_type", _merge_relation_types),
         )
         .reset_index()
     )

@@ -153,10 +153,11 @@ class GraphExtractor:
                     "source_id": source_id,
                 })
 
-            if record_type == '"relationship"' and len(record_attributes) >= 5:
+            if record_type == '"relationship"' and len(record_attributes) >= 6:
                 source = clean_str(record_attributes[1].upper())
                 target = clean_str(record_attributes[2].upper())
-                edge_description = clean_str(record_attributes[3])
+                relation_type = clean_str(record_attributes[3].upper())
+                edge_description = clean_str(record_attributes[4])
                 try:
                     weight = float(record_attributes[-1])
                 except ValueError:
@@ -165,6 +166,7 @@ class GraphExtractor:
                 relationships.append({
                     "source": source,
                     "target": target,
+                    "relation_type": relation_type,
                     "description": edge_description,
                     "source_id": source_id,
                     "weight": weight,
@@ -184,5 +186,5 @@ def _empty_entities_df() -> pd.DataFrame:
 
 def _empty_relationships_df() -> pd.DataFrame:
     return pd.DataFrame(
-        columns=["source", "target", "weight", "description", "source_id"]
+        columns=["source", "target", "relation_type","weight", "description", "source_id"]
     )
