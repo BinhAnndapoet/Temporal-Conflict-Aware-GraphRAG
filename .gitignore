@@ -61,6 +61,9 @@ docsite/
 # Jupyter notebook
 .ipynb_checkpoints/
 
+# Claude
+CLAUDE.md
+
 # Root build assets
 packages/*/LICENSE
 
