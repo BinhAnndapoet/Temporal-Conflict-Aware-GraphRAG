@@ -58,11 +58,7 @@ docsite/
 # PyCharm
 .idea/
 
-# Jupyter notebook
-.ipynb_checkpoints/
-
-# Claude
-CLAUDE.md
+# .ipynb_checkpoints/
 
 # Root build assets
 packages/*/LICENSE
