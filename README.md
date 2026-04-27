@@ -241,7 +241,71 @@ Tóm tắt:
 
 ---
 
-## 8) Kết luận
+## 8) Data Preprocessing Scripts
+
+Repo bao gồm pipeline chuẩn bị dữ liệu ECT-QA (earnings call transcripts) nằm trong `scripts/data_prep/`. Tất cả lệnh chạy từ **thư mục repo code**.
+
+### Cấu trúc
+
+```
+scripts/data_prep/
+├── download_data.py              # Tải ECT-QA dataset từ HuggingFace
+├── create_raw_corpus.py          # JSONL → raw_txt/ (cây thư mục theo công ty)
+└── preprocess_corpus/            # LLM filter → clean_corpus/
+    ├── __main__.py               # CLI entry point
+    ├── constants.py              # Prompts, decision sets
+    ├── parsing.py                # Transcript parsing
+    ├── ollama.py                 # Ollama API interaction
+    ├── processing.py             # Batch processing, retry logic
+    └── writers.py                # File I/O, reports
+```
+
+### Pipeline E2E (Step 0 → 4)
+
+```bash
+# Đứng tại repo code
+cd /path/to/Temporal-Conflict-Aware-GraphRAG
+
+# Step 0: Sync dependencies (1 lần)
+uv sync --all-packages
+
+# Step 1: Init workspace (1 lần)
+mkdir -p ../my_workspace/input
+uv run python -m graphrag init --root ../my_workspace
+
+# Step 2: Download ECT-QA dataset (1 lần)
+uv run python scripts/data_prep/download_data.py \
+    --output-dir ../my_workspace/data
+
+# Step 3: Tạo raw corpus
+uv run python scripts/data_prep/create_raw_corpus.py \
+    --input ../my_workspace/data/ECT-QA/corpus_author/train.jsonl \
+    --output ../my_workspace/data/raw_txt/
+
+# Step 4: Preprocess → clean corpus (cần Ollama đang chạy)
+uv run python -m scripts.data_prep.preprocess_corpus \
+    --input ../my_workspace/data/raw_txt/ \
+    --output ../my_workspace/data/clean_corpus/ \
+    --mode batch --model qwen3:14b
+```
+
+### Workspace data sau pipeline
+
+```
+my_workspace/data/
+├── ECT-QA/corpus_author/train.jsonl   ← download_data.py
+├── raw_txt/                           ← create_raw_corpus.py
+│   ├── Crocs_Inc/
+│   └── ...(~120 folders, ~480 files)
+└── clean_corpus/                      ← preprocess_corpus
+    ├── Crocs_Inc/*.txt
+    ├── drop_logs/                     ← audit logs
+    └── metadata/                      ← document metadata
+```
+
+---
+
+## 9) Kết luận
 
 Để chạy baseline ổn định tới `index`, chỉ cần nhớ 3 điểm:
 

@@ -25,6 +25,9 @@ requires-python = ">=3.11,<3.14"
 
 [dependency-groups]
 dev = [
+    "datasets>=3.6.0",
+    "huggingface-hub>=0.31.0",
+    "requests>=2.31.0",
     "coverage~=7.6",
     "deptry~=0.21",
     "ipykernel~=6.29",
