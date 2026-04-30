@@ -29,8 +29,8 @@ Hướng dẫn chi tiết từng bước để chuyển từ **OpenAI API** sang
 |---|---|---|
 | **API Key** | Cần `OPENAI_API_KEY` thật | Chỉ cần dummy key |
 | **Sau `init`** | Gần như hoàn chỉnh, chỉ cần điền key | **Cần sửa tay nhiều thứ** |
-| **Completion model** | `gpt-4.1` | `llama3.1:latest` |
-| **Embedding model** | `text-embedding-3-large` (**3072 chiều**) | `nomic-embed-text:latest` (**768 chiều**) |
+| **Completion model** | `gpt-4.1` | `${OLLAMA_CHAT_MODEL}` |
+| **Embedding model** | `text-embedding-3-large` (**3072 chiều**) | `${OLLAMA_EMBED_MODEL}` |
 | **Index crash** | ✅ Không | ⚠️ **Có — dimension mismatch** |
 
 ### Điều cần nhớ
@@ -149,6 +149,17 @@ llama3.1:latest            46e0c10c039e    4.9 GB    ...
 - ✅ `llama3.1:latest`
 - ❌ `llama3.1` (thiếu `:latest`)
 
+Chọn model một lần bằng biến môi trường, rồi dùng lại cho Step 1 và Step 2:
+
+```bash
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_CHAT_MODEL=llama3.1:latest
+export OLLAMA_EMBED_MODEL=nomic-embed-text:latest
+export OLLAMA_EMBED_DIM=768
+```
+
+`OLLAMA_CHAT_MODEL` là model completion dùng cho GraphRAG `index/query` và cũng là model mặc định cho `scripts.data_prep.preprocess_corpus` nếu bạn không truyền `--model`. `OLLAMA_EMBED_MODEL` là model embedding riêng; không dùng nó cho preprocessing.
+
 ---
 
 ## 4. Bước 1 — Init workspace cho Ollama
@@ -159,7 +170,7 @@ llama3.1:latest            46e0c10c039e    4.9 GB    ...
 # Ubuntu/Linux
 mkdir -p /home/manh/Projects/ban/my_workspace_ollama/input
 uv run python -m graphrag init --root /home/manh/Projects/ban/my_workspace_ollama \
-  --model llama3.1:latest --embedding nomic-embed-text:latest
+  --model "$OLLAMA_CHAT_MODEL" --embedding "$OLLAMA_EMBED_MODEL"
 ```
 
 ### Tại sao phải truyền `--model` và `--embedding`?
@@ -198,9 +209,13 @@ GRAPHRAG_API_KEY=sk-proj-...your-real-key...
 
 # Bây giờ (Ollama)
 GRAPHRAG_API_KEY=OLLAMA_DUMMY_KEY
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_CHAT_MODEL=llama3.1:latest
+OLLAMA_EMBED_MODEL=nomic-embed-text:latest
+OLLAMA_EMBED_DIM=768
 ```
 
-Với Ollama, API key không dùng thật — chỉ cần giá trị placeholder để qua validation.
+Với Ollama, API key không dùng thật — chỉ cần giá trị placeholder để qua validation. Các biến `OLLAMA_*` giúp GraphRAG settings và Step 2 preprocessing dùng cùng một model chat/base URL.
 
 ---
 
@@ -214,10 +229,10 @@ Tìm block `completion_models` trong `settings.yaml`, sửa thành:
 completion_models:
   default_completion_model:
     model_provider: ollama
-    model: llama3.1:latest           # ← phải khớp chính xác với ollama list
+    model: ${OLLAMA_CHAT_MODEL}      # ← phải khớp chính xác với ollama list
     auth_method: api_key
     api_key: ${GRAPHRAG_API_KEY}
-    api_base: http://localhost:11434  # ← THÊM dòng này
+    api_base: ${OLLAMA_BASE_URL}     # ← THÊM dòng này
     retry:
       type: exponential_backoff
 ```
@@ -230,10 +245,10 @@ Tìm block `embedding_models`, sửa thành:
 embedding_models:
   default_embedding_model:
     model_provider: ollama
-    model: nomic-embed-text:latest   # ← phải khớp chính xác với ollama list
+    model: ${OLLAMA_EMBED_MODEL}     # ← phải khớp chính xác với ollama list
     auth_method: api_key
     api_key: ${GRAPHRAG_API_KEY}
-    api_base: http://localhost:11434  # ← THÊM dòng này
+    api_base: ${OLLAMA_BASE_URL}     # ← THÊM dòng này
     retry:
       type: exponential_backoff
 ```
@@ -273,18 +288,18 @@ concurrent_requests: 1   # ← giữ thấp, Ollama local không chịu được
 ```yaml
 vector_store:
   type: lancedb
-  vector_size: 768                   # ← BẮT BUỘC: khớp với nomic-embed-text (768 chiều)
   db_uri: output/lancedb
+  vector_size: ${OLLAMA_EMBED_DIM}   # ← BẮT BUỘC: khớp embedding model
   index_schema:
     text_unit_text:
       index_name: text_unit_text
-      vector_size: 768               # ← cả 3 đều phải 768
+      vector_size: ${OLLAMA_EMBED_DIM}
     entity_description:
       index_name: entity_description
-      vector_size: 768
+      vector_size: ${OLLAMA_EMBED_DIM}
     community_full_content:
       index_name: community_full_content
-      vector_size: 768
+      vector_size: ${OLLAMA_EMBED_DIM}
 ```
 
 ### Lưu ý quan trọng
@@ -319,6 +334,8 @@ cp your_document.txt /home/manh/Projects/ban/my_workspace_ollama/input/
 - Dùng **câu hoàn chỉnh**, có **ngữ cảnh**, có **mô tả quan hệ** giữa các thực thể.
 - **Không nên** dùng bullet rời rạc, từ khóa đơn lẻ, text quá ngắn.
 - Nếu pipeline chạy đến `extract_graph` nhưng báo `No relationships detected` → dữ liệu đầu vào chưa đủ tốt, **không phải lỗi môi trường**.
+
+Repo hiện giữ prompt Microsoft GraphRAG baseline 5-field cho relationship và parser đã tương thích cả 5-field baseline lẫn 6-field có `relation_type` cho extension sau này. Vì vậy khi chạy baseline, không cần sửa prompt `prompts/extract_graph.txt` chỉ để thêm `relation_type`.
 
 ---
 
@@ -430,9 +447,9 @@ uv sync --all-packages
 |---|---|---|---|
 | 1 | `.env` | `GRAPHRAG_API_KEY=sk-...` | `GRAPHRAG_API_KEY=OLLAMA_DUMMY_KEY` |
 | 2 | `completion_models[].model_provider` | `openai` | `ollama` |
-| 3 | `completion_models[].model` | `gpt-4.1` | `llama3.1:latest` |
+| 3 | `completion_models[].model` | `gpt-4.1` | `${OLLAMA_CHAT_MODEL}` |
 | 4 | `embedding_models[].model_provider` | `openai` | `ollama` |
-| 5 | `embedding_models[].model` | `text-embedding-3-large` | `nomic-embed-text:latest` |
-| 6 | `vector_store` | **Không cần sửa** | ⚠️ **Bắt buộc** thêm `vector_size: 768` + `index_schema` đầy đủ |
+| 5 | `embedding_models[].model` | `text-embedding-3-large` | `${OLLAMA_EMBED_MODEL}` |
+| 6 | `vector_store` | **Không cần sửa** | ⚠️ **Bắt buộc** thêm `vector_size: ${OLLAMA_EMBED_DIM}` + `index_schema` đầy đủ |
 
 **Đã test ✅:** Index + Query 100% thành công với Ollama local sau khi áp dụng đầy đủ 6 thay đổi trên.

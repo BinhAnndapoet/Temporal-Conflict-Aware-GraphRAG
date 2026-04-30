@@ -39,7 +39,17 @@ scripts/data_prep/
 
 > **Lưu ý quan trọng:** Luôn luôn đứng ở thư mục gốc của repository code (`Temporal-Conflict-Aware-GraphRAG`) để chạy các lệnh `uv run`, KHÔNG đứng ở bên trong `my_workspace`.
 
-Giả định workspace của bạn nằm ở `../my_workspace`.
+Giả định workspace của bạn nằm ở `../my_workspace` và Step 1 đã ghi các biến Ollama vào `../my_workspace/.env`:
+
+```bash
+GRAPHRAG_API_KEY=OLLAMA_DUMMY_KEY
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_CHAT_MODEL=llama3.1:latest
+OLLAMA_EMBED_MODEL=nomic-embed-text:latest
+OLLAMA_EMBED_DIM=768
+```
+
+Trong Step 2, `OLLAMA_CHAT_MODEL` là model lọc preprocessing. Đây cũng là completion model dùng cho GraphRAG baseline ở Step 1. `OLLAMA_EMBED_MODEL` là model embedding riêng, không dùng cho preprocessing.
 
 ### Bước 2.1: Tải dữ liệu từ HuggingFace (`download_data.py`)
 
@@ -79,7 +89,7 @@ Hệ thống sẽ tạo ra cây thư mục `raw_txt/` chứa khoảng ~120 folde
 
 ### Bước 2.3: Lọc dữ liệu thô bằng LLM (`preprocess_corpus`)
 
-Đây là khâu quan trọng nhất. Script này đọc các file trong `raw_txt/`, sử dụng local LLM (Ollama - ví dụ `qwen3:14b` hoặc `llama3`) để phân tích từng câu một (sentence unit).
+Đây là khâu quan trọng nhất. Script này đọc các file trong `raw_txt/`, sử dụng local LLM qua Ollama (`OLLAMA_CHAT_MODEL`) để phân tích từng câu một (sentence unit).
 
 LLM sẽ gắn nhãn từng câu bằng các quyết định:
 - `KEEP_FACT`: Giữ lại vì chứa sự kiện kinh doanh, tài chính, biến động thị trường.
@@ -92,10 +102,10 @@ LLM sẽ gắn nhãn từng câu bằng các quyết định:
 **Lệnh chạy (Batch cho toàn bộ thư mục):**
 ```bash
 uv run python -m scripts.data_prep.preprocess_corpus \
+    --env-file ../my_workspace/.env \
     --input ../my_workspace/data/raw_txt/ \
     --output ../my_workspace/data/clean_corpus/ \
-    --mode batch \
-    --model qwen3:14b
+    --mode batch
 ```
 
 *(Bạn có thể chạy thử nghiệm trên 1 file duy nhất bằng cách đổi `--mode file` và truyền file vào `--input`)*

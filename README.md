@@ -2,7 +2,7 @@
 
 Hướng dẫn chuẩn để chạy **baseline GraphRAG** với **workspace nằm ngoài repo code**, tối ưu cho việc bạn tiếp tục custom logic trong repo mà không làm bẩn source.
 
-> Mục tiêu của README này: chạy được pipeline tới bước `index` (xây dựng graph) một cách ổn định.
+> Mục tiêu của README này: chạy được **Microsoft GraphRAG baseline** tới bước `index` một cách ổn định trước, sau đó mới phát triển các bước Temporal Document Extraction/custom research pipeline.
 
 ---
 
@@ -92,6 +92,8 @@ Sau bước này workspace sẽ có các file/thư mục quan trọng như:
 - `.env`
 - `input/`
 
+> Quan trọng: `init` chỉ tạo skeleton workspace, `settings.yaml`, `.env`, và prompt files. Với OpenAI default, file sinh ra thường dùng được gần như ngay. Với Ollama/local, **không được hiểu rằng chọn model trong CLI là đã đủ cấu hình**.
+
 ### Trường hợp dùng OpenAI API (rất hay gặp)
 
 Khi bạn chạy `init`, CLI có thể hỏi nhanh phần cấu hình model/provider. Với flow OpenAI, sau khi bạn gắn key vào `.env` (hoặc cung cấp key theo cách CLI yêu cầu), hệ thống thường scaffold sẵn cấu hình cần thiết trong workspace, bao gồm cả `settings.yaml` với model mặc định.
@@ -107,6 +109,147 @@ Mặc định thường thấy:
 
 > `init` chỉ chạy 1 lần cho mỗi workspace. Nếu thấy `Project already initialized at ...` thì không phải lỗi, chỉ cần chuyển sang bước kế tiếp.
 
+### Trường hợp dùng Ollama/local baseline
+
+GraphRAG `init` hiện chỉ thay tên `--model` và `--embedding` vào template mặc định. Template mặc định vẫn có thể là `model_provider: openai`, không tự thêm `api_base`, không tự cấu hình LanceDB vector dimension, và cũng không biết embedding model local có vector size bao nhiêu.
+
+Vì vậy flow đúng cho Ollama là:
+
+```text
+kiểm tra Ollama backend/model thật
+→ init workspace một lần
+→ sửa settings.yaml sang Ollama preset đúng model + vector size
+→ chạy preprocessing bằng preprocessing model
+→ đưa clean .txt vào input
+→ chạy index bằng GraphRAG completion model + embedding model
+```
+
+Không tạo sẵn `settings.yaml` trước khi chạy `init`. Nếu `settings.yaml` đã tồn tại, `init` sẽ báo `Project already initialized...`; nếu dùng `--force`, file cấu hình bạn sửa thủ công có thể bị ghi đè.
+
+Trước khi init/index, kiểm tra backend:
+
+**Ubuntu/Linux:**
+
+```bash
+ollama list
+curl http://localhost:11434/api/tags
+```
+
+**Windows (PowerShell):**
+
+```powershell
+ollama list
+curl.exe http://localhost:11434/api/tags
+```
+
+Chọn các giá trị thật từ máy của bạn:
+
+```text
+OLLAMA_CHAT_MODEL            model dùng chung cho GraphRAG completion và Step 2 preprocessing, ví dụ llama3.1:latest
+OLLAMA_EMBED_MODEL           model embedding riêng, ví dụ nomic-embed-text:latest
+OLLAMA_BASE_URL              thường là http://localhost:11434
+OLLAMA_EMBED_DIM             phụ thuộc embedding model, ví dụ nomic-embed-text = 768
+```
+
+Nếu model mặc định chưa có, pull explicit:
+
+```bash
+ollama pull llama3.1:latest
+ollama pull nomic-embed-text:latest
+```
+
+Ví dụ cấu hình chung cho workspace:
+
+```bash
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_CHAT_MODEL=llama3.1:latest
+export OLLAMA_EMBED_MODEL=nomic-embed-text:latest
+export OLLAMA_EMBED_DIM=768
+```
+
+> `OLLAMA_CHAT_MODEL` là model chat/completion dùng chung cho GraphRAG và preprocessing. `OLLAMA_EMBED_MODEL` không dùng cho preprocessing vì đó là model vector embedding.
+
+Ví dụ init skeleton sau khi đã chọn model:
+
+**Ubuntu/Linux:**
+
+```bash
+uv run python -m graphrag init \
+    --root /home/user_name/path/my_workspace \
+    --model "$OLLAMA_CHAT_MODEL" \
+    --embedding "$OLLAMA_EMBED_MODEL"
+```
+
+**Windows (PowerShell):**
+
+```powershell
+uv run python -m graphrag init `
+    --root D:\RAG\my_workspace `
+    --model $env:OLLAMA_CHAT_MODEL `
+    --embedding $env:OLLAMA_EMBED_MODEL
+```
+
+Sau đó mở `<workspace>/settings.yaml` và đảm bảo có các cấu hình quan trọng sau:
+
+```yaml
+concurrent_requests: 1
+
+completion_models:
+  default_completion_model:
+    model_provider: ollama
+    model: ${OLLAMA_CHAT_MODEL}
+    auth_method: api_key
+    api_key: ${GRAPHRAG_API_KEY}
+    api_base: ${OLLAMA_BASE_URL}
+    call_args:
+      temperature: 0
+      top_p: 0.9
+      timeout: 900
+    retry:
+      type: exponential_backoff
+
+embedding_models:
+  default_embedding_model:
+    model_provider: ollama
+    model: ${OLLAMA_EMBED_MODEL}
+    auth_method: api_key
+    api_key: ${GRAPHRAG_API_KEY}
+    api_base: ${OLLAMA_BASE_URL}
+    retry:
+      type: exponential_backoff
+
+vector_store:
+  type: lancedb
+  db_uri: output/lancedb
+  vector_size: ${OLLAMA_EMBED_DIM}
+  index_schema:
+    text_unit_text:
+      index_name: text_unit_text
+      vector_size: ${OLLAMA_EMBED_DIM}
+    entity_description:
+      index_name: entity_description
+      vector_size: ${OLLAMA_EMBED_DIM}
+    community_full_content:
+      index_name: community_full_content
+      vector_size: ${OLLAMA_EMBED_DIM}
+```
+
+Với `nomic-embed-text:latest`, `OLLAMA_EMBED_DIM` là `768`. Nếu đổi embedding model hoặc vector size, hãy tạo workspace mới hoặc xóa output/cache/vector store cũ trước khi chạy lại `index`.
+
+```bash
+rm -rf /home/user_name/path/my_workspace/output
+rm -rf /home/user_name/path/my_workspace/cache
+```
+
+**Lưu ý baseline:** repo giữ prompt Microsoft GraphRAG dạng relationship 5-field và parser hiện tương thích cả 5-field baseline lẫn 6-field có `relation_type` để phục vụ extension sau này. Khi smoke test local, có thể set tạm:
+
+```yaml
+extract_graph:
+  max_gleanings: 0
+```
+
+Khi model/prompt ổn rồi mới cân nhắc tăng lại `max_gleanings: 1`.
+
 ### Bước 3 — Cấu hình `.env`, `settings.yaml`, và dữ liệu input
 
 1. Mở `<workspace>/.env` và điền API key.
@@ -116,7 +259,7 @@ Mặc định thường thấy:
 Gợi ý nhanh:
 
 - **Dùng OpenAI**: thường chỉ cần xác nhận `OPENAI_API_KEY` + kiểm tra model mặc định (`gpt-4.1`, `text-embedding-3-large`) là đủ để chạy baseline.
-- **Dùng Ollama/local**: bắt buộc đối chiếu đúng tên model thực tế trong máy.
+- **Dùng Ollama/local**: bắt buộc đối chiếu đúng tên model thực tế trong máy và kiểm tra `model_provider`, `api_base`, `embedding model`, `vector_size`.
 
 ### Kiểm tra model backend trước khi `index` (đặc biệt khi dùng Ollama)
 
@@ -126,6 +269,15 @@ curl http://localhost:11434/api/tags
 ```
 
 Đảm bảo `model:` trong `settings.yaml` **khớp chính xác** với tên model thật trong máy.
+
+Baseline Ollama đã test trong workspace mẫu:
+
+- Completion LLM: `llama3.1:latest`
+- Embedding model: `nomic-embed-text:latest`
+- Vector size: `768`
+- Preprocessing filter model: cùng `OLLAMA_CHAT_MODEL`
+
+Lưu ý: Step 2 preprocessing mặc định đọc `OLLAMA_CHAT_MODEL` nếu bạn dùng `--env-file <workspace>/.env` hoặc đã `source` file `.env`. Nếu đổi sang Qwen cho GraphRAG index, cần kiểm tra kỹ chat template/thinking mode vì parser vẫn yêu cầu tuple output rõ ràng.
 
 Nếu không khớp, thường gặp lỗi:
 
@@ -160,7 +312,8 @@ Kết quả sinh ra sẽ nằm trong workspace ngoài repo (`output/`, `cache/`,
 - [ ] Workspace nằm ngoài repo code
 - [ ] Sau `init`, workspace có `settings.yaml`, `.env`, `input/`
 - [ ] Nếu dùng OpenAI: `.env` đã có key hợp lệ (ví dụ `OPENAI_API_KEY=...`)
-- [ ] Nếu dùng Ollama: `ollama list` hiển thị đúng model
+- [ ] Nếu dùng Ollama: `ollama list` hiển thị đúng completion model, embedding model, và preprocessing model
+- [ ] Nếu dùng Ollama: `settings.yaml` đã chuyển sang `model_provider: ollama`, có `api_base`, và `vector_size` khớp embedding model
 - [ ] `settings.yaml` dùng đúng model name thực tế
 - [ ] `input/data.txt` đã có dữ liệu đầu vào
 - [ ] Dữ liệu có câu hoàn chỉnh, có ngữ cảnh và mô tả quan hệ thực thể
@@ -215,13 +368,39 @@ uv sync --all-packages
 
 - Môi trường đang chạy được.
 - Pipeline đã tới bước extract graph.
-- Nhưng dữ liệu đầu vào chưa đủ thông tin quan hệ.
+- Nhưng GraphRAG không thu được relationship hợp lệ sau khi parse output LLM.
 
 **Xử lý**:
 
-- Cải thiện nội dung trong `input/`.
-- Dùng câu hoàn chỉnh thay vì bullet rời rạc.
-- Mô tả rõ thực thể + sự kiện + quan hệ + thời gian/địa điểm.
+- Kiểm tra dữ liệu trong `input/` có đủ câu hoàn chỉnh, thực thể, sự kiện, quan hệ, thời gian/địa điểm.
+- Kiểm tra `<workspace>/prompts/extract_graph.txt` nếu đang dùng local model như Qwen/Llama.
+- Với model local, tránh để model trả Markdown, JSON, bullet list, giải thích từng bước, hoặc `<think>...</think>` trong output extract graph.
+- Output nên là tuple records thuần như:
+
+```text
+("entity"<|>AON<|>ORGANIZATION<|>Aon is the company discussed in the earnings call)
+##
+("relationship"<|>GREG CASE<|>AON<|>CEO_OF<|>Greg Case is Aon's CEO<|>10)
+<|COMPLETE|>
+```
+
+Nếu model trả kiểu sau thì GraphRAG parser dễ fail hoặc drop relationship:
+
+```text
+### Entities
+- AON
+
+### Relationships
+1. AON is related to COVID-19
+```
+
+hoặc:
+
+```json
+{"entities": [...], "relationships": [...]}
+```
+
+> Benchmark script của repo tự patch `prompts/extract_graph.txt` sang prompt strict có `/no_think` và tuple-only output để giảm lỗi này.
 
 ---
 
@@ -260,33 +439,73 @@ scripts/data_prep/
     └── writers.py                # File I/O, reports
 ```
 
-### Pipeline E2E (Step 0 → 4)
+### Pipeline E2E: Ollama baseline + ECT-QA preprocessing
+
+Pipeline này dùng **cùng một workspace** từ `init` tới preprocessing và `index`. Step preprocessing không chạy `graphrag init` lại.
 
 ```bash
 # Đứng tại repo code
-cd /path/to/Temporal-Conflict-Aware-GraphRAG
+cd /home/guest/Projects/Research/GraphRAG/Temporal-Conflict-Aware-GraphRAG
 
 # Step 0: Sync dependencies (1 lần)
 uv sync --all-packages
 
-# Step 1: Init workspace (1 lần)
+# Step 1: Tạo workspace ngoài repo
 mkdir -p ../my_workspace/input
-uv run python -m graphrag init --root ../my_workspace
 
-# Step 2: Download ECT-QA dataset (1 lần)
+# Step 1.1: Chọn model dùng chung cho GraphRAG completion và preprocessing
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_CHAT_MODEL=llama3.1:latest
+export OLLAMA_EMBED_MODEL=nomic-embed-text:latest
+export OLLAMA_EMBED_DIM=768
+
+# Step 2: Init skeleton workspace (1 lần)
+uv run python -m graphrag init \
+    --root ../my_workspace \
+    --model "$OLLAMA_CHAT_MODEL" \
+    --embedding "$OLLAMA_EMBED_MODEL"
+
+# Step 2.1: Ghi các biến Ollama vào workspace .env để index/preprocess dùng lại
+cat > ../my_workspace/.env <<EOF
+GRAPHRAG_API_KEY=OLLAMA_DUMMY_KEY
+OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL}
+OLLAMA_EMBED_MODEL=${OLLAMA_EMBED_MODEL}
+OLLAMA_EMBED_DIM=${OLLAMA_EMBED_DIM}
+EOF
+
+# Step 3: Kiểm tra Ollama model thật trong máy
+ollama list
+curl http://localhost:11434/api/tags
+
+# Step 4: Sửa ../my_workspace/settings.yaml sang Ollama preset chuẩn
+# Bắt buộc kiểm tra:
+# - completion model: ${OLLAMA_CHAT_MODEL}
+# - embedding model: ${OLLAMA_EMBED_MODEL}
+# - model_provider: ollama
+# - api_base: http://localhost:11434
+# - vector_size: 768
+
+# Step 5: Download ECT-QA dataset (1 lần)
 uv run python scripts/data_prep/download_data.py \
     --output-dir ../my_workspace/data
 
-# Step 3: Tạo raw corpus
+# Step 6: Tạo raw corpus
 uv run python scripts/data_prep/create_raw_corpus.py \
     --input ../my_workspace/data/ECT-QA/corpus_author/train.jsonl \
     --output ../my_workspace/data/raw_txt/
 
-# Step 4: Preprocess → clean corpus (cần Ollama đang chạy)
+# Step 7: Preprocess raw corpus → clean corpus
 uv run python -m scripts.data_prep.preprocess_corpus \
+    --env-file ../my_workspace/.env \
     --input ../my_workspace/data/raw_txt/ \
     --output ../my_workspace/data/clean_corpus/ \
-    --mode batch --model qwen3:14b
+    --mode batch \
+    --batch-size 20 \
+    --review-batch-size 20 \
+    --context-window 1 \
+    --review-window 1 \
+    --fallback-policy abort
 ```
 
 ### Workspace data sau pipeline
@@ -303,9 +522,244 @@ my_workspace/data/
     └── metadata/                      ← document metadata
 ```
 
+### Chuẩn bị `input/` cho GraphRAG index
+
+Không copy toàn bộ `clean_corpus/` vào `input/`, vì GraphRAG đọc đệ quy các file `.txt`. Nếu copy nhầm `drop_logs/*.drop.txt`, baseline sẽ index cả log.
+
+Chỉ đưa clean document `.txt` vào `input/`; bỏ qua:
+
+- `drop_logs/`
+- `metadata/`
+- `*.drop.txt`
+- `*.quality.md`
+- `*.analysis.json`
+
+Ví dụ chạy thử với một công ty:
+
+```bash
+cp ../my_workspace/data/clean_corpus/Crocs_Inc/*.txt ../my_workspace/input/
+```
+
+Sau đó chạy baseline index:
+
+```bash
+uv run python -m graphrag index --root ../my_workspace
+```
+
+Baseline pass khi workspace có các artifact:
+
+```text
+output/documents.parquet
+output/text_units.parquet
+output/entities.parquet
+output/relationships.parquet
+output/community_reports.parquet
+```
+
 ---
 
-## 9) Kết luận
+## 9) Benchmark local: 2 files × 2 models
+
+Repo có script benchmark E2E để đo cùng một flow:
+
+```text
+tạo workspace
+→ init GraphRAG
+→ ghi settings/.env
+→ preprocess 1 raw transcript
+→ copy clean .txt vào input/
+→ chạy graphrag index
+→ lưu benchmark_report.json
+```
+
+Script liên quan:
+
+```text
+scripts/benchmark_e2e.sh
+scripts/data_prep/prepare_graphrag_input.py
+configs/settings.ollama.optimized.yaml
+```
+
+### Cách chạy benchmark
+
+Đứng tại repo code:
+
+```bash
+cd /home/guest/Projects/Research/GraphRAG/Temporal-Conflict-Aware-GraphRAG
+```
+
+Kiểm tra model và GPU:
+
+```bash
+ollama list
+ollama ps
+nvidia-smi
+```
+
+Chọn 2 raw files:
+
+```bash
+AON=/home/guest/Projects/Research/GraphRAG/my_workspace/data/raw_txt/Aon_plc/AON_financials_2020_q1.txt
+CROX=/home/guest/Projects/Research/GraphRAG/my_workspace/data/raw_txt/Crocs_Inc/CROX_consumer_discretionary_2020_q1.txt
+```
+
+Set Ollama tuning trước khi chạy:
+
+```bash
+export OLLAMA_NUM_PARALLEL=2
+export OLLAMA_MAX_LOADED_MODELS=2
+export OLLAMA_FLASH_ATTENTION=1
+```
+
+Chạy benchmark:
+
+```bash
+bash scripts/benchmark_e2e.sh "$AON" qwen3:14b optimized
+bash scripts/benchmark_e2e.sh "$CROX" qwen3:14b optimized
+bash scripts/benchmark_e2e.sh "$AON" llama3.1:latest optimized
+bash scripts/benchmark_e2e.sh "$CROX" llama3.1:latest optimized
+```
+
+Mỗi run tạo workspace riêng ở thư mục cha của repo, dạng:
+
+```text
+../bench_<file>_<model>_<timestamp>/
+```
+
+### Benchmark pass khi có gì?
+
+Một run được xem là pass khi workspace benchmark có:
+
+```text
+benchmark_report.json
+preprocess.log
+index.log
+data/clean_corpus/
+input/
+output/documents.parquet
+output/text_units.parquet
+output/entities.parquet
+output/relationships.parquet
+output/communities.parquet
+output/community_reports.parquet
+output/lancedb/
+```
+
+Xem nhanh kết quả:
+
+```bash
+find /home/guest/Projects/Research/GraphRAG \
+  -maxdepth 2 \
+  -path '*/benchmark_report.json' \
+  -type f \
+  | sort
+
+cat /home/guest/Projects/Research/GraphRAG/bench_*/benchmark_report.json
+```
+
+### Kết quả benchmark hiện tại
+
+Hardware:
+
+```text
+GPU: NVIDIA GeForce RTX 5070 Ti, 16GB VRAM
+Embedding: nomic-embed-text:latest, vector size 768
+Settings: optimized
+concurrent_requests: 2
+embed_text.batch_size: 16
+embed_text.batch_max_tokens: 8192
+extract_graph.max_gleanings: 0
+```
+
+Kết quả 2 files:
+
+| Model | File | Preprocess | Index | Total | Retention |
+|---|---:|---:|---:|---:|---:|
+| `llama3.1:latest` | AON Q1 2020 | 2218s | 219s | 2442s | 75.5% |
+| `llama3.1:latest` | CROX Q1 2020 | 3133s | 362s | 3500s | 75.3% |
+| `qwen3:14b` | AON Q1 2020 | 290s | 359s | 653s | 85.3% |
+| `qwen3:14b` | CROX Q1 2020 | 451s | 344s | 800s | 80.8% |
+
+Đọc kết quả:
+
+- `qwen3:14b` nhanh hơn nhiều ở preprocessing trong pipeline JSON 3-pass hiện tại.
+- `llama3.1:latest` nhanh hơn ở một số bước indexing như `extract_graph`, nhưng thua rất xa end-to-end vì preprocessing quá lâu.
+- `qwen3:14b` giữ high-recall tốt hơn trong 2 file test: retention cao hơn và fallback count bằng 0.
+- Embedding tối ưu rõ rệt nhờ `batch_size: 16`, không còn là bottleneck chính như cấu hình `batch_size: 1`.
+
+Khuyến nghị hiện tại:
+
+```text
+Baseline local thực dụng:
+qwen3:14b cho preprocessing
+→ clean_corpus
+→ thử tiếp hybrid llama3.1 cho GraphRAG indexing nếu muốn index nhanh hơn
+→ so sánh với qwen3 indexing trước khi chạy full batch
+```
+
+### Vì sao prompt `extract_graph.txt` phải strict?
+
+GraphRAG baseline không đọc mọi kiểu output tự nhiên của LLM. Bước `extract_graph` parse response bằng delimiter cố định:
+
+```text
+tuple delimiter: <|>
+record delimiter: ##
+completion delimiter: <|COMPLETE|>
+```
+
+Vì vậy local LLM phải trả đúng tuple records. Benchmark script ghi đè `<workspace>/prompts/extract_graph.txt` bằng prompt strict:
+
+```text
+/no_think
+
+Return ONLY tuple records.
+Do NOT return Markdown headings, bullet lists, JSON, code fences, explanations, notes, or a final-answer section.
+Every entity must use exactly:
+("entity"<|><entity_name><|><entity_type><|><entity_description>)
+Every relationship must use exactly:
+("relationship"<|><source_entity><|><target_entity><|><relation_type><|><relationship_description><|><relationship_strength>)
+Use ## between records.
+End with <|COMPLETE|>.
+```
+
+Lý do cần `/no_think`:
+
+- Qwen3 có thinking mode; nếu model sinh `<think>...</think>` hoặc phân tích trung gian, output có thể lẫn text ngoài tuple.
+- Với GraphRAG parser, text ngoài tuple không phải chỉ “xấu format”; nó có thể làm record bị parse sai, entity/relationship bị bỏ qua, hoặc relationship bị drop vì source/target không match entity đã parse.
+- Với indexing baseline, ưu tiên output máy đọc được hơn là câu trả lời tự nhiên đẹp.
+
+Nếu bạn sửa prompt này, hãy test lại trên 1 file trước. Không chạy batch lớn khi chưa thấy đủ:
+
+```text
+output/entities.parquet
+output/relationships.parquet
+output/community_reports.parquet
+```
+
+### Cảnh báo khi chạy full batch
+
+Không nên chạy thẳng 480 files ngay sau khi đổi model/prompt/settings. Lộ trình an toàn:
+
+```text
+1 file
+→ 2 files
+→ 1 company folder
+→ vài company folders
+→ full 480 files
+```
+
+Nếu đổi model, prompt, embedding dimension, hoặc vector store settings, nên dùng workspace mới hoặc xóa generated artifacts:
+
+```bash
+rm -rf <workspace>/output
+rm -rf <workspace>/cache
+```
+
+Không xóa `data/raw_txt`, `data/clean_corpus`, hoặc source repo nếu chỉ muốn rerun index.
+
+---
+
+## 10) Kết luận
 
 Để chạy baseline ổn định tới `index`, chỉ cần nhớ 3 điểm:
 
