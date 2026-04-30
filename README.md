@@ -558,7 +558,7 @@ output/community_reports.parquet
 
 ---
 
-## 9) Benchmark local: 2 files × 2 models
+## 9) Benchmark local: 2 files × 3 model flows
 
 Repo có script benchmark E2E để đo cùng một flow:
 
@@ -566,9 +566,9 @@ Repo có script benchmark E2E để đo cùng một flow:
 tạo workspace
 → init GraphRAG
 → ghi settings/.env
-→ preprocess 1 raw transcript
+→ preprocess 1 raw transcript bằng preprocess model
 → copy clean .txt vào input/
-→ chạy graphrag index
+→ chạy graphrag index bằng index model
 → lưu benchmark_report.json
 ```
 
@@ -618,12 +618,19 @@ bash scripts/benchmark_e2e.sh "$AON" qwen3:14b optimized
 bash scripts/benchmark_e2e.sh "$CROX" qwen3:14b optimized
 bash scripts/benchmark_e2e.sh "$AON" llama3.1:latest optimized
 bash scripts/benchmark_e2e.sh "$CROX" llama3.1:latest optimized
+
+# Hybrid: Qwen preprocesses, Llama indexes.
+bash scripts/benchmark_e2e.sh "$AON" qwen3:14b optimized llama3.1:latest
+bash scripts/benchmark_e2e.sh "$CROX" qwen3:14b optimized llama3.1:latest
 ```
+
+Tham số thứ 2 là **preprocessing model**. Tham số thứ 4, nếu có, là **GraphRAG index/completion model**. Nếu không truyền tham số thứ 4, script dùng cùng một model cho cả preprocessing và index.
 
 Mỗi run tạo workspace riêng ở thư mục cha của repo, dạng:
 
 ```text
 ../bench_<file>_<model>_<timestamp>/
+../bench_<file>_pre_<preprocess_model>__idx_<index_model>_<timestamp>/   # hybrid
 ```
 
 ### Benchmark pass khi có gì?
@@ -643,6 +650,51 @@ output/relationships.parquet
 output/communities.parquet
 output/community_reports.parquet
 output/lancedb/
+```
+
+### Metric Retention đo gì?
+
+`Retention` là metric của **preprocessing**, không phải metric chất lượng knowledge graph.
+
+Công thức trong code:
+
+```text
+Retention (%) = sentence_units_after / sentence_units_before * 100
+```
+
+Trong đó:
+
+- `sentence_units_before`: tổng số sentence units được parser tách ra từ raw transcript.
+- `sentence_units_after`: số sentence units cuối cùng được giữ trong `clean_corpus`.
+- Sentence units được giữ thường có decision `KEEP_FACT` hoặc `KEEP_CONTEXT`.
+- Sentence units không vào `clean_corpus` thường là `DISCARD` hoặc `MOVE_TO_METADATA`.
+
+Ví dụ AON với Qwen preprocessing:
+
+```text
+sentence_units_before = 143
+sentence_units_after  = 122
+Retention             = 122 / 143 * 100 = 85.3%
+```
+
+Nghĩa là 85.3% sentence units ban đầu được giữ để đưa vào GraphRAG index. Retention cao hơn cho thấy preprocessing giữ nhiều nội dung hơn, nhưng **không tự động chứng minh model tốt hơn**. Nếu giữ cả boilerplate, disclaimer, lời chào, hoặc text không có quan hệ entity/event thì Retention cao vẫn có thể xấu.
+
+Đọc Retention cùng các metric sau:
+
+- `fallback_count`: số lần model output lỗi/không parse được và phải fallback.
+- `final_discarded`: số sentence units bị loại.
+- `moved_to_metadata`: số sentence units chuyển sang metadata, không đưa vào clean corpus.
+- `rescued_by_review`: số sentence units ban đầu bị loại nhưng được review cứu lại.
+- Số rows trong `output/entities.parquet` và `output/relationships.parquet`.
+
+Xem Retention của một run:
+
+```bash
+# Các run mới sau khi script được cập nhật sẽ có block này:
+jq '.preprocess_quality' <workspace>/benchmark_report.json
+
+# Cách luôn đúng là đọc report gốc của preprocessing:
+jq '.quality_report' <workspace>/data/clean_corpus/drop_logs/*/*.analysis.json
 ```
 
 Xem nhanh kết quả:
@@ -673,18 +725,30 @@ extract_graph.max_gleanings: 0
 
 Kết quả 2 files:
 
-| Model | File | Preprocess | Index | Total | Retention |
-|---|---:|---:|---:|---:|---:|
-| `llama3.1:latest` | AON Q1 2020 | 2218s | 219s | 2442s | 75.5% |
-| `llama3.1:latest` | CROX Q1 2020 | 3133s | 362s | 3500s | 75.3% |
-| `qwen3:14b` | AON Q1 2020 | 290s | 359s | 653s | 85.3% |
-| `qwen3:14b` | CROX Q1 2020 | 451s | 344s | 800s | 80.8% |
+| Flow | File | Preprocess | Index | Total | Retention | Entities | Relationships | Reports |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Llama only: `llama3.1` → `llama3.1` | AON Q1 2020 | 2218s | 219s | 2442s | 75.5% | 9 | 1 | 1 |
+| Llama only: `llama3.1` → `llama3.1` | CROX Q1 2020 | 3133s | 362s | 3500s | 75.3% | 14 | 12 | 2 |
+| Qwen only: `qwen3:14b` → `qwen3:14b` | AON Q1 2020 | 290s | 359s | 653s | 85.3% | 18 | 18 | 2 |
+| Qwen only: `qwen3:14b` → `qwen3:14b` | CROX Q1 2020 | 451s | 344s | 800s | 80.8% | 22 | 18 | 2 |
+| Hybrid: `qwen3:14b` → `llama3.1` | AON Q1 2020 | 295s | 402s | 700s | 85.3% | 10 | 8 | 2 |
+| Hybrid: `qwen3:14b` → `llama3.1` | CROX Q1 2020 | 452s | 217s | 674s | 80.8% | 19 | 23 | 1 |
+
+`Entities`, `Relationships`, và `Reports` là số rows trong:
+
+```text
+output/entities.parquet
+output/relationships.parquet
+output/community_reports.parquet
+```
 
 Đọc kết quả:
 
 - `qwen3:14b` nhanh hơn nhiều ở preprocessing trong pipeline JSON 3-pass hiện tại.
 - `llama3.1:latest` nhanh hơn ở một số bước indexing như `extract_graph`, nhưng thua rất xa end-to-end vì preprocessing quá lâu.
-- `qwen3:14b` giữ high-recall tốt hơn trong 2 file test: retention cao hơn và fallback count bằng 0.
+- Hybrid giữ Retention giống Qwen-only vì cùng dùng Qwen cho preprocessing; khác biệt nằm ở graph extraction/community report của index model.
+- Hybrid không thắng tuyệt đối: AON hybrid chậm hơn Qwen-only và sinh ít graph rows hơn; CROX hybrid nhanh hơn Qwen-only và sinh nhiều relationships hơn, nhưng ít community reports hơn.
+- `qwen3:14b` giữ high-recall tốt hơn Llama-only trong 2 file test: retention cao hơn và fallback count bằng 0.
 - Embedding tối ưu rõ rệt nhờ `batch_size: 16`, không còn là bottleneck chính như cấu hình `batch_size: 1`.
 
 Khuyến nghị hiện tại:
@@ -693,9 +757,11 @@ Khuyến nghị hiện tại:
 Baseline local thực dụng:
 qwen3:14b cho preprocessing
 → clean_corpus
-→ thử tiếp hybrid llama3.1 cho GraphRAG indexing nếu muốn index nhanh hơn
-→ so sánh với qwen3 indexing trước khi chạy full batch
+→ qwen3:14b cho GraphRAG indexing làm baseline mặc định
+→ chỉ dùng hybrid qwen3:14b preprocessing + llama3.1 indexing nếu benchmark thêm cho thấy file/company cụ thể chạy nhanh hơn mà graph artifacts vẫn đủ tốt
 ```
+
+Với 2 file hiện tại, Qwen-only là lựa chọn ổn định nhất để tiếp tục baseline. Hybrid đáng giữ lại như một biến thể benchmark, nhưng chưa đủ bằng chứng để thay thế Qwen-only cho full batch.
 
 ### Vì sao prompt `extract_graph.txt` phải strict?
 

@@ -2,12 +2,17 @@
 # ──────────────────────────────────────────────────────────────────
 # Benchmark E2E: preprocess 1 raw file → copy to input → graphrag index
 # Usage:
-#   bash scripts/benchmark_e2e.sh <raw_file> <model> [optimized]
+#   bash scripts/benchmark_e2e.sh <raw_file> <preprocess_model> [optimized] [index_model]
 #
 # Examples:
 #   bash scripts/benchmark_e2e.sh \
 #       ../my_workspace/data/raw_txt/Aon_plc/AON_financials_2020_q1.txt \
 #       llama3.1:latest optimized
+#
+#   # Hybrid: Qwen preprocesses, Llama indexes.
+#   bash scripts/benchmark_e2e.sh \
+#       ../my_workspace/data/raw_txt/Aon_plc/AON_financials_2020_q1.txt \
+#       qwen3:14b optimized llama3.1:latest
 #
 #   bash scripts/benchmark_e2e.sh \
 #       ../my_workspace/data/raw_txt/Crocs_Inc/CROX_consumer_discretionary_2024_q1.txt \
@@ -15,28 +20,36 @@
 # ──────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-RAW_FILE="${1:?Usage: $0 <raw_file> <model> [optimized]}"
-MODEL="${2:?Usage: $0 <raw_file> <model> [optimized]}"
+RAW_FILE="${1:?Usage: $0 <raw_file> <preprocess_model> [optimized] [index_model]}"
+PREPROCESS_MODEL="${2:?Usage: $0 <raw_file> <preprocess_model> [optimized] [index_model]}"
 USE_OPTIMIZED="${3:-default}"
+INDEX_MODEL="${4:-$PREPROCESS_MODEL}"
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FILE_STEM=$(basename "$RAW_FILE" .txt)
-MODEL_SAFE=$(echo "$MODEL" | tr ':' '_' | tr '/' '_')
-WS_NAME="bench_${FILE_STEM}_${MODEL_SAFE}_${TIMESTAMP}"
+PREPROCESS_MODEL_SAFE=$(echo "$PREPROCESS_MODEL" | tr ':' '_' | tr '/' '_')
+INDEX_MODEL_SAFE=$(echo "$INDEX_MODEL" | tr ':' '_' | tr '/' '_')
+if [ "$PREPROCESS_MODEL" = "$INDEX_MODEL" ]; then
+    MODEL_LABEL="$PREPROCESS_MODEL_SAFE"
+else
+    MODEL_LABEL="pre_${PREPROCESS_MODEL_SAFE}__idx_${INDEX_MODEL_SAFE}"
+fi
+WS_NAME="bench_${FILE_STEM}_${MODEL_LABEL}_${TIMESTAMP}"
 WS_DIR="${REPO_DIR}/../${WS_NAME}"
 
 echo "═══════════════════════════════════════════════════════════"
 echo "  BENCHMARK E2E"
-echo "  File    : $RAW_FILE"
-echo "  Model   : $MODEL"
-echo "  Settings: $USE_OPTIMIZED"
+echo "  File            : $RAW_FILE"
+echo "  Preprocess model: $PREPROCESS_MODEL"
+echo "  Index model     : $INDEX_MODEL"
+echo "  Settings        : $USE_OPTIMIZED"
 echo "  Workspace: $WS_DIR"
 echo "═══════════════════════════════════════════════════════════"
 
 # ── ENV ──
 export OLLAMA_BASE_URL=http://localhost:11434
-export OLLAMA_CHAT_MODEL="$MODEL"
+export OLLAMA_CHAT_MODEL="$INDEX_MODEL"
 export OLLAMA_EMBED_MODEL=nomic-embed-text:latest
 export OLLAMA_EMBED_DIM=768
 export GRAPHRAG_API_KEY=ollama
@@ -57,7 +70,7 @@ T2_START=$(date +%s%N)
 cd "$REPO_DIR"
 uv run python -m graphrag init \
     --root "$WS_DIR" \
-    --model "$MODEL" \
+    --model "$INDEX_MODEL" \
     --embedding "$OLLAMA_EMBED_MODEL"
 T2_END=$(date +%s%N)
 T2_MS=$(( (T2_END - T2_START) / 1000000 ))
@@ -279,7 +292,7 @@ echo "  Done (${T3_MS}ms)"
 
 # ── Step 4: Preprocess raw file ──
 echo ""
-echo "[Step 4] Preprocessing: $FILE_STEM with $MODEL ..."
+echo "[Step 4] Preprocessing: $FILE_STEM with $PREPROCESS_MODEL ..."
 T4_START=$(date +%s%N)
 cd "$REPO_DIR"
 uv run python -m scripts.data_prep.preprocess_corpus \
@@ -287,7 +300,7 @@ uv run python -m scripts.data_prep.preprocess_corpus \
     --input "$RAW_FILE" \
     --output "$WS_DIR/data/clean_corpus/" \
     --mode file \
-    --model "$MODEL" \
+    --model "$PREPROCESS_MODEL" \
     --batch-size 30 \
     --review-batch-size 30 \
     --context-window 1 \
@@ -297,6 +310,24 @@ uv run python -m scripts.data_prep.preprocess_corpus \
 T4_END=$(date +%s%N)
 T4_SEC=$(( (T4_END - T4_START) / 1000000000 ))
 echo "  Preprocessing done (${T4_SEC}s)"
+
+# ── Step 4.1: Read preprocessing quality metrics ──
+QUALITY_JSON="$WS_DIR/data/clean_corpus/drop_logs/$(basename "$(dirname "$RAW_FILE")")/${FILE_STEM}.analysis.json"
+SENTENCE_UNITS_BEFORE=null
+SENTENCE_UNITS_AFTER=null
+RETENTION_PCT=null
+FINAL_REDUCTION_PCT=null
+FALLBACK_COUNT=null
+RESCUED_BY_REVIEW=null
+
+if [ -f "$QUALITY_JSON" ] && command -v jq >/dev/null 2>&1; then
+    SENTENCE_UNITS_BEFORE=$(jq -r '.quality_report.sentence_units_before // null' "$QUALITY_JSON")
+    SENTENCE_UNITS_AFTER=$(jq -r '.quality_report.sentence_units_after // null' "$QUALITY_JSON")
+    RETENTION_PCT=$(jq -r '.quality_report.retention_pct // null' "$QUALITY_JSON")
+    FINAL_REDUCTION_PCT=$(jq -r '.quality_report.final_reduction_pct // null' "$QUALITY_JSON")
+    FALLBACK_COUNT=$(jq -r '.quality_report.fallback_count // null' "$QUALITY_JSON")
+    RESCUED_BY_REVIEW=$(jq -r '.quality_report.rescued_by_review // null' "$QUALITY_JSON")
+fi
 
 # ── Step 5: Copy clean to input ──
 echo ""
@@ -329,7 +360,8 @@ echo "════════════════════════�
 echo "  BENCHMARK RESULTS"
 echo "═══════════════════════════════════════════════════════════"
 echo "  File       : $FILE_STEM"
-echo "  Model      : $MODEL"
+echo "  Preprocess : $PREPROCESS_MODEL"
+echo "  Index      : $INDEX_MODEL"
 echo "  Settings   : $USE_OPTIMIZED"
 echo "  Workspace  : $WS_DIR"
 echo "───────────────────────────────────────────────────────────"
@@ -337,6 +369,8 @@ echo "  Create workspace : ${T1_MS}ms"
 echo "  Init workspace   : ${T2_MS}ms"
 echo "  Configure        : ${T3_MS}ms"
 echo "  Preprocess       : ${T4_SEC}s"
+echo "  Retention        : ${RETENTION_PCT}%"
+echo "  Fallback         : ${FALLBACK_COUNT}"
 echo "  Copy to input    : ${T5_MS}ms"
 echo "  Index            : ${T6_SEC}s"
 echo "  TOTAL            : ${TOTAL_SEC}s"
@@ -346,9 +380,19 @@ echo "════════════════════════�
 cat > "$WS_DIR/benchmark_report.json" <<EOF
 {
     "file": "$FILE_STEM",
-    "model": "$MODEL",
+    "preprocess_model": "$PREPROCESS_MODEL",
+    "index_model": "$INDEX_MODEL",
     "settings": "$USE_OPTIMIZED",
     "workspace": "$WS_DIR",
+    "preprocess_quality": {
+        "analysis_json": "$QUALITY_JSON",
+        "sentence_units_before": $SENTENCE_UNITS_BEFORE,
+        "sentence_units_after": $SENTENCE_UNITS_AFTER,
+        "retention_pct": $RETENTION_PCT,
+        "final_reduction_pct": $FINAL_REDUCTION_PCT,
+        "fallback_count": $FALLBACK_COUNT,
+        "rescued_by_review": $RESCUED_BY_REVIEW
+    },
     "timing": {
         "create_workspace_ms": $T1_MS,
         "init_workspace_ms": $T2_MS,
