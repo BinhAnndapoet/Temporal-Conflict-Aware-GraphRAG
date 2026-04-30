@@ -2,24 +2,36 @@
 CLI entry point for the preprocess_corpus package.
 
 Usage (from repo root):
+    set -a; source ../my_workspace/.env; set +a
+
     uv run python -m scripts.data_prep.preprocess_corpus \\
         --input ../my_workspace/data/raw_txt/ \\
         --output ../my_workspace/data/clean_corpus/ \\
-        --mode batch --model qwen3:14b
+        --mode batch
 
     uv run python -m scripts.data_prep.preprocess_corpus \\
+        --env-file ../my_workspace/.env \\
         --input ../my_workspace/data/raw_txt/Crocs_Inc/CROX_consumer_discretionary_2024_q1.txt \\
         --output ../my_workspace/data/clean_corpus/ \\
-        --mode file --model qwen3:14b
+        --mode file
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-from .constants import DEFAULT_BATCH_SIZE, DEFAULT_MODEL, DEFAULT_NUM_CTX, DEFAULT_REVIEW_BATCH_SIZE
+from dotenv import load_dotenv
+
+from .constants import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_MODEL,
+    DEFAULT_NUM_CTX,
+    DEFAULT_REVIEW_BATCH_SIZE,
+    OLLAMA_CHAT_MODEL_ENV,
+)
 from .writers import preprocess_batch_dir, preprocess_file, print_batch_report, print_file_report
 
 
@@ -33,12 +45,18 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Single file\n"
+            "  # Use workspace .env for OLLAMA_CHAT_MODEL / OLLAMA_BASE_URL\n"
+            "  uv run python -m scripts.data_prep.preprocess_corpus \\\n"
+            "      --env-file ../my_workspace/.env \\\n"
+            "      --input ../my_workspace/data/raw_txt/Crocs_Inc/CROX_consumer_discretionary_2024_q1.txt \\\n"
+            "      --output ../my_workspace/data/clean_corpus/ \\\n"
+            "      --mode file\n\n"
+            "  # Single file with explicit model override\n"
             "  uv run python -m scripts.data_prep.preprocess_corpus \\\n"
             "      --input ../my_workspace/data/raw_txt/Crocs_Inc/CROX_consumer_discretionary_2024_q1.txt \\\n"
             "      --output ../my_workspace/data/clean_corpus/ \\\n"
             "      --mode file --model qwen3:14b\n\n"
-            "  # Batch all files\n"
+            "  # Batch all files with explicit model override\n"
             "  uv run python -m scripts.data_prep.preprocess_corpus \\\n"
             "      --input ../my_workspace/data/raw_txt/ \\\n"
             "      --output ../my_workspace/data/clean_corpus/ \\\n"
@@ -48,7 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", "-i", required=True, type=Path, help="Input file or directory")
     parser.add_argument("--output", "-o", required=True, type=Path, help="Output directory for clean corpus")
     parser.add_argument("--mode", "-m", choices=["file", "batch"], default="file", help="Processing mode")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Ollama model name (default: {DEFAULT_MODEL})")
+    parser.add_argument("--env-file", type=Path, help="Optional workspace .env file to load before resolving Ollama settings")
+    parser.add_argument("--model", help=f"Ollama model name (default: ${OLLAMA_CHAT_MODEL_ENV} or {DEFAULT_MODEL})")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help=f"Items per LLM batch (default: {DEFAULT_BATCH_SIZE})")
     parser.add_argument("--review-batch-size", type=int, default=DEFAULT_REVIEW_BATCH_SIZE, help=f"Items per review batch (default: {DEFAULT_REVIEW_BATCH_SIZE})")
     parser.add_argument("--timeout", type=int, default=300, help="Ollama API timeout seconds (default: 300)")
@@ -68,11 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.env_file:
+        load_dotenv(args.env_file)
+
+    model = args.model or os.getenv(OLLAMA_CHAT_MODEL_ENV) or DEFAULT_MODEL
     input_path: Path = args.input.resolve()
     output_dir: Path = args.output.resolve()
 
     common_kwargs = {
-        "model": args.model,
+        "model": model,
         "batch_size": args.batch_size,
         "dry_run": args.dry_run,
         "timeout": args.timeout,
@@ -88,7 +111,7 @@ def main() -> None:
         "audit_sample_size": args.audit_sample_size,
     }
 
-    print(f"Model          : {args.model}")
+    print(f"Model          : {model}")
     print(f"Mode           : {args.mode}")
     print(f"Input          : {input_path}")
     print(f"Output         : {output_dir}")

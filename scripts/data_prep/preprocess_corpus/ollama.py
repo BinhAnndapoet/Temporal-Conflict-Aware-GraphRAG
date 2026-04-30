@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,8 @@ from .constants import (
     ALLOWED_INITIAL_DECISIONS,
     ALLOWED_KEEP_REVIEW_DECISIONS,
     ALLOWED_REVIEW_DECISIONS,
+    OLLAMA_BASE_URL_ENV,
+    OLLAMA_CHAT_URL_ENV,
     OLLAMA_URL,
     SYSTEM_PROMPT,
 )
@@ -136,6 +139,19 @@ def validate_audit_items(data: dict[str, Any], batch: list[dict[str, Any]]) -> l
     )
 
 
+def get_ollama_chat_url() -> str:
+    """Resolve the Ollama chat endpoint from env, falling back to localhost."""
+    chat_url = os.getenv(OLLAMA_CHAT_URL_ENV)
+    if chat_url:
+        return chat_url.rstrip("/")
+
+    base_url = os.getenv(OLLAMA_BASE_URL_ENV)
+    if base_url:
+        return f"{base_url.rstrip('/')}/api/chat"
+
+    return OLLAMA_URL
+
+
 def call_ollama(
     prompt: str,
     model: str,
@@ -159,7 +175,7 @@ def call_ollama(
     if json_mode:
         payload["format"] = "json"
 
-    resp = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
+    resp = requests.post(get_ollama_chat_url(), json=payload, timeout=timeout)
     resp.raise_for_status()
     return {"payload": payload, "response": resp.json()}
 

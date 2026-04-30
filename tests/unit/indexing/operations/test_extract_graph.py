@@ -39,6 +39,7 @@ def _relationship_row(
     target: str,
     weight: float = 1.0,
     description: str = "desc",
+    relation_type: str = "RELATED_TO",
     source_id: str = "tu1",
 ) -> dict:
     """Build a single raw relationship row as produced by the graph extractor."""
@@ -46,6 +47,7 @@ def _relationship_row(
         "source": source,
         "target": target,
         "weight": weight,
+        "relation_type": relation_type,
         "description": description,
         "source_id": source_id,
     }
@@ -107,7 +109,14 @@ class TestMergeRelationships:
     def test_empty_input(self):
         """Empty relationship list should produce an empty DataFrame."""
         df = pd.DataFrame(
-            columns=["source", "target", "weight", "description", "source_id"]
+            columns=[
+                "source",
+                "target",
+                "weight",
+                "relation_type",
+                "description",
+                "source_id",
+            ]
         )
         merged = _merge_relationships([df])
 
@@ -225,7 +234,14 @@ class TestFilterOrphanRelationships:
         merged_entities = _merge_entities([entities])
 
         relationships = pd.DataFrame(
-            columns=["source", "target", "weight", "description", "source_id"]
+            columns=[
+                "source",
+                "target",
+                "weight",
+                "relation_type",
+                "description",
+                "source_id",
+            ]
         )
         merged_rels = _merge_relationships([relationships])
 

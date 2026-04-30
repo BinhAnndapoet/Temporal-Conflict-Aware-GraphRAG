@@ -7,6 +7,9 @@ from __future__ import annotations
 # ────────────────────────────────────────────────────────────────
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA_BASE_URL_ENV = "OLLAMA_BASE_URL"
+OLLAMA_CHAT_URL_ENV = "OLLAMA_CHAT_URL"
+OLLAMA_CHAT_MODEL_ENV = "OLLAMA_CHAT_MODEL"
 DEFAULT_MODEL = "qwen3:14b"
 DEFAULT_BATCH_SIZE = 20
 DEFAULT_REVIEW_BATCH_SIZE = 20

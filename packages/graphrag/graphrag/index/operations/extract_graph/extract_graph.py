@@ -117,6 +117,8 @@ def _merge_entities(entity_dfs) -> pd.DataFrame:
 
 def _merge_relationships(relationship_dfs) -> pd.DataFrame:
     all_relationships = pd.concat(relationship_dfs, ignore_index=False)
+    if "relation_type" not in all_relationships.columns:
+        all_relationships["relation_type"] = "RELATED_TO"
 
     def _merge_relation_types(values):
         """Deduplicate and join relation types from multiple text chunks."""
